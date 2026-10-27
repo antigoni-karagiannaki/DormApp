@@ -27,7 +27,7 @@ type Resident = {
   room: string;
 };
 
-type WashQueueEntry = {
+type ResourceQueueEntry = {
   profile_id: string;
   created_at: string;
   name: string;
@@ -36,7 +36,9 @@ type WashQueueEntry = {
 export default function Home() {
   const [house, setHouse] = useState<House | null>(null);
   const [residents, setResidents] = useState<Resident[]>([]);
-  const [washQueue, setWashQueue] = useState<WashQueueEntry[]>([]);
+  const [washQueue, setWashQueue] = useState<ResourceQueueEntry[]>([]);
+  const [showerQueue, setShowerQueue] = useState<ResourceQueueEntry[]>([]);
+  const [clockNow, setClockNow] = useState(() => Date.now());
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentUserName, setCurrentUserName] = useState("You");
   const [joinCode, setJoinCode] = useState("");
@@ -138,6 +140,7 @@ export default function Home() {
     const houseId = house?.id;
     if (!houseId) {
       setWashQueue([]);
+      setShowerQueue([]);
       return;
     }
 
@@ -145,14 +148,26 @@ export default function Home() {
 
     async function loadWashQueue() {
       try {
-        const { data: queueData, error: queueError } = await supabase
-          .from("washing_machine_queue")
-          .select("profile_id, created_at")
-          .eq("house_id", houseId)
-          .order("created_at", { ascending: true });
-        if (queueError) throw queueError;
+        const [washResult, showerResult] = await Promise.all([
+          supabase
+            .from("washing_machine_queue")
+            .select("profile_id, created_at")
+            .eq("house_id", houseId)
+            .order("created_at", { ascending: true }),
+          supabase
+            .from("house_shower_queue")
+            .select("profile_id, created_at")
+            .eq("house_id", houseId)
+            .order("created_at", { ascending: true }),
+        ]);
+        if (washResult.error) throw washResult.error;
+        if (showerResult.error) throw showerResult.error;
 
-        const profileIds = [...new Set((queueData ?? []).map((entry) => entry.profile_id))];
+        const washData = washResult.data ?? [];
+        const showerData = showerResult.data ?? [];
+        const profileIds = [...new Set(
+          [...washData, ...showerData].map((entry) => entry.profile_id)
+        )];
         const { data: profileData, error: profileError } = profileIds.length
           ? await supabase.from("profiles").select("id, name").in("id", profileIds)
           : { data: [], error: null };
@@ -163,12 +178,12 @@ export default function Home() {
         );
 
         if (active) {
-          setWashQueue(
-            (queueData ?? []).map((entry) => ({
+          const withNames = (entries: typeof washData) => entries.map((entry) => ({
               ...entry,
               name: names.get(entry.profile_id) ?? "Resident",
-            }))
-          );
+            }));
+          setWashQueue(withNames(washData));
+          setShowerQueue(withNames(showerData));
         }
       } catch (queueError) {
         if (active) setError(getErrorMessage(queueError, "Could not load the wash queue."));
@@ -183,6 +198,13 @@ export default function Home() {
       clearInterval(intervalId);
     };
   }, [house?.id]);
+
+  useEffect(() => {
+    if (!washQueue.length && !showerQueue.length) return;
+
+    const intervalId = setInterval(() => setClockNow(Date.now()), 1000);
+    return () => clearInterval(intervalId);
+  }, [washQueue.length, showerQueue.length]);
 
   async function handleWashQueue() {
     if (!house || !currentUserId || queueUpdating) return;
@@ -218,6 +240,45 @@ export default function Home() {
       );
     } catch (queueError) {
       setError(getErrorMessage(queueError, "Could not update the wash queue."));
+    } finally {
+      setQueueUpdating(false);
+    }
+  }
+
+  async function handleShowerQueue() {
+    if (!house || !currentUserId || queueUpdating) return;
+
+    const alreadyQueued = showerQueue.some((entry) => entry.profile_id === currentUserId);
+    setQueueUpdating(true);
+    setError("");
+
+    try {
+      const { error: queueError } = alreadyQueued
+        ? await supabase
+          .from("house_shower_queue")
+            .delete()
+            .eq("house_id", house.id)
+            .eq("profile_id", currentUserId)
+        : await supabase.from("house_shower_queue").insert({
+            house_id: house.id,
+            profile_id: currentUserId,
+          });
+      if (queueError) throw queueError;
+
+      setShowerQueue((queue) =>
+        alreadyQueued
+          ? queue.filter((entry) => entry.profile_id !== currentUserId)
+          : [
+              ...queue,
+              {
+                profile_id: currentUserId,
+                created_at: new Date().toISOString(),
+                name: currentUserName,
+              },
+            ]
+      );
+    } catch (queueError) {
+      setError(getErrorMessage(queueError, "Could not update the shower queue."));
     } finally {
       setQueueUpdating(false);
     }
@@ -287,15 +348,15 @@ export default function Home() {
               <StatusMeter label="Residents" value={`${residents.length}`} detail="at home" />
               <StatusMeter
                 label="Laundry"
-                value={house.washing_machine_available ? "Ready" : "In use"}
+                value={washQueue.length > 0 || !house.washing_machine_available ? "In use" : "Ready"}
                 detail="washer"
-                active={house.washing_machine_available}
+                active={washQueue.length === 0 && house.washing_machine_available}
               />
               <StatusMeter
                 label="Shower"
-                value={house.shower_available ? "Ready" : "In use"}
+                value={showerQueue.length > 0 || !house.shower_available ? "In use" : "Ready"}
                 detail="shared"
-                active={house.shower_available}
+                active={showerQueue.length === 0 && house.shower_available}
               />
             </View>
 
@@ -307,11 +368,12 @@ export default function Home() {
                 Alert.alert("Bedrooms", names);
               }}
               onKitchen={() => Alert.alert("Kitchen", `A shared space for ${residents.length} ${residents.length === 1 ? "resident" : "residents"}.`)}
-              onShower={() => Alert.alert("Shower", house.shower_available ? "The shower is available." : "The shower is currently in use.")}
+              onShower={handleShowerQueue}
               onWash={handleWashQueue}
-              showerAvailable={house.shower_available}
               washQueue={washQueue}
+              showerQueue={showerQueue}
               currentUserId={currentUserId}
+              clockNow={clockNow}
               queueUpdating={queueUpdating}
             />
 
@@ -411,18 +473,20 @@ function HouseIllustration({
   onKitchen,
   onShower,
   onWash,
-  showerAvailable,
   washQueue,
+  showerQueue,
   currentUserId,
+  clockNow,
   queueUpdating,
 }: {
   onBedrooms: () => void;
   onKitchen: () => void;
   onShower: () => void;
   onWash: () => void;
-  showerAvailable: boolean;
-  washQueue: WashQueueEntry[];
+  washQueue: ResourceQueueEntry[];
+  showerQueue: ResourceQueueEntry[];
   currentUserId: string | null;
+  clockNow: number;
   queueUpdating: boolean;
 }) {
   return (
@@ -492,6 +556,15 @@ function HouseIllustration({
           <View style={styles.utilityScene}>
             <View style={styles.showerCabin}>
               <Text style={styles.showerHead}>⌁</Text>
+              {showerQueue.length > 0 ? (
+                <>
+                  <ShowerRainDrop delay={0} left={9} />
+                  <ShowerRainDrop delay={130} left={25} />
+                  <ShowerRainDrop delay={260} left={41} />
+                  <ShowerRainDrop delay={390} left={57} />
+                  <ShowerRainDrop delay={520} left={73} />
+                </>
+              ) : null}
               <View style={styles.showerDoor} />
             </View>
             <View style={styles.washer}>
@@ -514,17 +587,24 @@ function HouseIllustration({
           </View>
           <View style={styles.utilityActions}>
             <RoomButton
-              label={showerAvailable ? "Shower" : "Shower · busy"}
+              label={
+                queueUpdating
+                  ? "Updating..."
+                  : showerQueue.some((entry) => entry.profile_id === currentUserId)
+                    ? "🚿 Leave queue"
+                    : "🚿 Shower"
+              }
               onPress={onShower}
               style={styles.utilityAction}
+              disabled={queueUpdating}
             />
             <RoomButton
               label={
                 queueUpdating
                   ? "Updating..."
                   : washQueue.some((entry) => entry.profile_id === currentUserId)
-                    ? "Leave queue"
-                    : "Wash"
+                    ? "🧺 Leave queue"
+                    : "🧺 Wash"
               }
               onPress={onWash}
               style={styles.utilityAction}
@@ -534,26 +614,106 @@ function HouseIllustration({
         </View>
       </View>
       <View style={styles.foundation} />
-      <View style={styles.queuePanel}>
-        <View style={styles.queueHeading}>
-          <Text style={styles.queueTitle}>WASH QUEUE</Text>
-          <Text style={styles.queueCount}>{washQueue.length} WAITING</Text>
-        </View>
-        {washQueue.length ? (
-          washQueue.map((entry, index) => (
-            <View key={entry.profile_id} style={styles.queueRow}>
-              <Text style={styles.queueNumber}>{String(index + 1).padStart(2, "0")}</Text>
-              <Text numberOfLines={1} style={styles.queueName}>{entry.name}</Text>
-              {entry.profile_id === currentUserId ? (
-                <Text style={styles.queueYou}>YOU</Text>
-              ) : null}
-            </View>
-          ))
-        ) : (
-          <Text style={styles.queueEmpty}>No one waiting. Add yourself to the line.</Text>
-        )}
-      </View>
+      <ResourceQueuePanel
+        title="WASH QUEUE"
+        entries={washQueue}
+        currentUserId={currentUserId}
+        now={clockNow}
+        note="Elapsed wait · usual cycle ~1h 15m"
+      />
+      <ResourceQueuePanel
+        title="SHOWER QUEUE"
+        entries={showerQueue}
+        currentUserId={currentUserId}
+        now={clockNow}
+        note="Elapsed wait"
+      />
     </View>
+  );
+}
+
+function ResourceQueuePanel({
+  title,
+  entries,
+  currentUserId,
+  now,
+  note,
+}: {
+  title: string;
+  entries: ResourceQueueEntry[];
+  currentUserId: string | null;
+  now: number;
+  note: string;
+}) {
+  return (
+    <View style={styles.queuePanel}>
+      <View style={styles.queueHeading}>
+        <Text style={styles.queueTitle}>{title}</Text>
+        <Text style={styles.queueCount}>{entries.length} WAITING</Text>
+      </View>
+      <Text style={styles.queueNote}>{note}</Text>
+      {entries.length ? (
+        entries.map((entry, index) => (
+          <View key={entry.profile_id} style={styles.queueRow}>
+            <Text style={styles.queueNumber}>{String(index + 1).padStart(2, "0")}</Text>
+            <Text numberOfLines={1} style={styles.queueName}>{entry.name}</Text>
+            <Text style={styles.queueTimer}>{formatElapsed(entry.created_at, now)}</Text>
+            {entry.profile_id === currentUserId ? (
+              <Text style={styles.queueYou}>YOU</Text>
+            ) : null}
+          </View>
+        ))
+      ) : (
+        <Text style={styles.queueEmpty}>No one waiting. Add yourself to the line.</Text>
+      )}
+    </View>
+  );
+}
+
+function formatElapsed(createdAt: string, now: number) {
+  const totalSeconds = Math.floor(Math.max(0, now - Date.parse(createdAt)) / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const paddedMinutes = String(minutes).padStart(2, "0");
+  const paddedSeconds = String(seconds).padStart(2, "0");
+
+  return hours
+    ? `${hours}:${paddedMinutes}:${paddedSeconds}`
+    : `${paddedMinutes}:${paddedSeconds}`;
+}
+
+function ShowerRainDrop({ delay, left }: { delay: number; left: number }) {
+  const progress = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.delay(delay),
+        Animated.timing(progress, {
+          toValue: 1,
+          duration: 650,
+          useNativeDriver: true,
+        }),
+        Animated.timing(progress, {
+          toValue: 0,
+          duration: 0,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+
+    animation.start();
+    return () => animation.stop();
+  }, [delay, progress]);
+
+  const translateY = progress.interpolate({ inputRange: [0, 1], outputRange: [0, 20] });
+  const opacity = progress.interpolate({ inputRange: [0, 0.15, 1], outputRange: [0, 1, 0] });
+
+  return (
+    <Animated.View
+      style={[styles.rainDrop, { left, opacity, transform: [{ translateY }] }]}
+    />
   );
 }
 
@@ -1080,6 +1240,14 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 0,
   },
+  rainDrop: {
+    backgroundColor: "#1C9DC4",
+    borderRadius: 2,
+    height: 8,
+    position: "absolute",
+    top: 23,
+    width: 2,
+  },
   showerDoor: {
     backgroundColor: "rgba(255,249,241,0.28)",
     borderColor: "#568C88",
@@ -1187,6 +1355,11 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: 1,
   },
+  queueNote: {
+    color: palette.mauve,
+    fontSize: 9,
+    paddingBottom: 5,
+  },
   queueCount: {
     color: palette.pinkDark,
     fontSize: 9,
@@ -1211,6 +1384,15 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 12,
     fontWeight: "700",
+  },
+  queueTimer: {
+    color: palette.pinkDark,
+    fontFamily: "monospace",
+    fontSize: 11,
+    fontWeight: "700",
+    fontVariant: ["tabular-nums"],
+    minWidth: 58,
+    textAlign: "right",
   },
   queueYou: {
     color: palette.green,
