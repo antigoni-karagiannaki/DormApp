@@ -361,12 +361,6 @@ export default function Home() {
             </View>
 
             <HouseIllustration
-              onBedrooms={() => {
-                const names = residents.length
-                  ? residents.map((resident) => `${resident.name}${resident.room ? ` · ${resident.room}` : ""}`).join("\n")
-                  : "No residents found yet.";
-                Alert.alert("Bedrooms", names);
-              }}
               onKitchen={() => Alert.alert("Kitchen", `A shared space for ${residents.length} ${residents.length === 1 ? "resident" : "residents"}.`)}
               onShower={handleShowerQueue}
               onWash={handleWashQueue}
@@ -424,7 +418,6 @@ const palette = {
   pinkLight: "#FFD0E4",
   cream: "#FFF4DF",
   paper: "#FFF9F1",
-  bedroom: "#D6B6F1",
   kitchen: "#FFE0A0",
   utility: "#A8E5D2",
   green: "#25866F",
@@ -469,7 +462,6 @@ function StatusMeter({
 }
 
 function HouseIllustration({
-  onBedrooms,
   onKitchen,
   onShower,
   onWash,
@@ -479,7 +471,6 @@ function HouseIllustration({
   clockNow,
   queueUpdating,
 }: {
-  onBedrooms: () => void;
   onKitchen: () => void;
   onShower: () => void;
   onWash: () => void;
@@ -504,26 +495,6 @@ function HouseIllustration({
       </View>
 
       <View style={styles.houseBody}>
-        <View style={[styles.floor, styles.bedroomFloor]}>
-          <View style={styles.floorLabelRow}>
-            <Text style={styles.floorLabel}>3F  BEDROOMS</Text>
-            <Text style={styles.floorDots}>•••</Text>
-          </View>
-          <View style={styles.bedroomScene}>
-            <View style={styles.bed}>
-              <View style={styles.bedPillow} />
-              <View style={styles.bedBlanket} />
-              <View style={styles.bedBase} />
-            </View>
-            <WindowArt />
-            <View style={styles.wardrobe}>
-              <View style={styles.wardrobeDoor} />
-              <View style={styles.wardrobeDoor} />
-            </View>
-          </View>
-          <RoomButton label="Dress up" onPress={onBedrooms} style={styles.bedroomAction} />
-        </View>
-
         <View style={[styles.floor, styles.kitchenFloor]}>
           <View style={styles.floorLabelRow}>
             <Text style={styles.floorLabel}>2F  KITCHEN</Text>
@@ -591,7 +562,7 @@ function HouseIllustration({
                 queueUpdating
                   ? "Updating..."
                   : showerQueue.some((entry) => entry.profile_id === currentUserId)
-                    ? "🚿 Leave queue"
+                    ? " Leave Shower"
                     : "🚿 Shower"
               }
               onPress={onShower}
@@ -603,7 +574,7 @@ function HouseIllustration({
                 queueUpdating
                   ? "Updating..."
                   : washQueue.some((entry) => entry.profile_id === currentUserId)
-                    ? "🧺 Leave queue"
+                    ? "Leave Laundry Machine"
                     : "🧺 Wash"
               }
               onPress={onWash}
@@ -985,14 +956,11 @@ const styles = StyleSheet.create({
   floor: {
     borderColor: palette.outline,
     borderWidth: 3,
-    height: 135,
+    height: 90,
     overflow: "hidden",
     paddingHorizontal: 10,
     paddingTop: 7,
     position: "relative",
-  },
-  bedroomFloor: {
-    backgroundColor: palette.bedroom,
   },
   kitchenFloor: {
     backgroundColor: palette.kitchen,
@@ -1001,6 +969,7 @@ const styles = StyleSheet.create({
   utilityFloor: {
     backgroundColor: palette.utility,
     borderTopWidth: 4,
+    height: 180,
   },
   floorLabelRow: {
     alignItems: "center",
@@ -1024,55 +993,6 @@ const styles = StyleSheet.create({
     color: palette.ink,
     fontSize: 8,
     fontWeight: "900",
-  },
-  bedroomScene: {
-    alignItems: "flex-end",
-    bottom: 8,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    left: 10,
-    position: "absolute",
-    right: 10,
-    top: 31,
-  },
-  bed: {
-    height: 49,
-    justifyContent: "flex-end",
-    marginBottom: 8,
-    position: "relative",
-    width: "36%",
-  },
-  bedBase: {
-    backgroundColor: "#713B75",
-    borderColor: palette.outline,
-    borderWidth: 3,
-    bottom: 0,
-    height: 34,
-    left: 0,
-    position: "absolute",
-    right: 0,
-  },
-  bedPillow: {
-    backgroundColor: palette.paper,
-    borderColor: palette.outline,
-    borderWidth: 2,
-    height: 13,
-    left: 4,
-    position: "absolute",
-    top: 5,
-    width: "30%",
-    zIndex: 1,
-  },
-  bedBlanket: {
-    backgroundColor: palette.pink,
-    borderColor: palette.outline,
-    borderWidth: 2,
-    height: 24,
-    position: "absolute",
-    right: 3,
-    top: 16,
-    width: "68%",
-    zIndex: 1,
   },
   windowFrame: {
     backgroundColor: palette.paper,
@@ -1101,21 +1021,6 @@ const styles = StyleSheet.create({
     top: "47%",
     width: "100%",
   },
-  wardrobe: {
-    backgroundColor: "#B494E8",
-    borderColor: palette.outline,
-    borderWidth: 3,
-    flexDirection: "row",
-    height: 55,
-    marginBottom: 3,
-    width: "25%",
-  },
-  wardrobeDoor: {
-    borderColor: "#75549B",
-    borderRightWidth: 2,
-    flex: 1,
-    marginVertical: 3,
-  },
   roomButton: {
     alignItems: "center",
     backgroundColor: palette.pink,
@@ -1135,14 +1040,10 @@ const styles = StyleSheet.create({
   roomButtonPressed: {
     transform: [{ translateY: 2 }],
     borderBottomWidth: 2,
+    backgroundColor : palette.pinkLight,
   },
   roomButtonDisabled: {
     opacity: 0.65,
-  },
-  bedroomAction: {
-    bottom: 8,
-    position: "absolute",
-    right: 10,
   },
   kitchenScene: {
     alignItems: "center",
@@ -1188,7 +1089,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#8ED8C5",
     borderColor: palette.outline,
     borderWidth: 3,
-    height: 72,
+    height: 48,
     marginBottom: 2,
     position: "relative",
     width: "19%",
@@ -1320,11 +1221,12 @@ const styles = StyleSheet.create({
   },
   utilityActions: {
     alignItems: "center",
-    bottom: 8,
     flexDirection: "row",
     gap: 7,
     position: "absolute",
     right: 8,
+    top: 8,
+    zIndex: 4,
   },
   utilityAction: {
     minHeight: 27,
